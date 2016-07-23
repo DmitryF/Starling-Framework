@@ -10,18 +10,19 @@
 
 package starling.display
 {
-    import flash.geom.Matrix;
     import flash.geom.Point;
     import flash.geom.Rectangle;
 
     import starling.core.starling_internal;
     import starling.rendering.IndexData;
-    import starling.rendering.MeshStyle;
     import starling.rendering.Painter;
     import starling.rendering.VertexData;
     import starling.rendering.VertexDataFormat;
+    import starling.styles.MeshStyle;
     import starling.textures.Texture;
+    import starling.utils.MatrixUtil;
     import starling.utils.MeshUtil;
+    import starling.utils.execute;
 
     use namespace starling_internal;
 
@@ -38,7 +39,7 @@ package starling.display
      *  to add support for color transformations, normal mapping, etc.</p>
      *
      *  @see MeshBatch
-     *  @see starling.rendering.MeshStyle
+     *  @see starling.styles.MeshStyle
      *  @see starling.rendering.VertexData
      *  @see starling.rendering.IndexData
      */
@@ -47,9 +48,10 @@ package starling.display
         /** @private */ internal var _style:MeshStyle;
         /** @private */ internal var _vertexData:VertexData;
         /** @private */ internal var _indexData:IndexData;
+        /** @private */ internal var _pixelSnapping:Boolean;
 
-        private var _pixelSnapping:Boolean;
         private static var sDefaultStyle:Class = MeshStyle;
+        private static var sDefaultStyleFactory:Function = null;
 
         /** Creates a new mesh with the given vertices and indices.
          *  If you don't pass a style, an instance of <code>MeshStyle</code> will be created
@@ -62,7 +64,6 @@ package starling.display
 
             _vertexData = vertexData;
             _indexData = indexData;
-            _pixelSnapping = true;
 
             setStyle(style, false);
         }
@@ -93,43 +94,9 @@ package starling.display
         override public function render(painter:Painter):void
         {
             if (_pixelSnapping)
-                snapToPixels(painter.state.modelviewMatrix, painter.pixelSize);
+                MatrixUtil.snapToPixels(painter.state.modelviewMatrix, painter.pixelSize);
 
             painter.batchMesh(this);
-        }
-
-        private function snapToPixels(matrix:Matrix, pixelSize:Number):void
-        {
-            // Snapping only makes sense if the object is unscaled and rotated only by
-            // multiples of 90 degrees. If that's the case can be found out by looking
-            // at the modelview matrix.
-
-            const E:Number = 0.0001;
-
-            var doSnap:Boolean = false;
-            var aSq:Number, bSq:Number, cSq:Number, dSq:Number;
-
-            if (matrix.b + E > 0 && matrix.b - E < 0 && matrix.c + E > 0 && matrix.c - E < 0)
-            {
-                // what we actually want is 'Math.abs(matrix.a)', but squaring
-                // the value works just as well for our needs & is faster.
-
-                aSq = matrix.a * matrix.a;
-                dSq = matrix.d * matrix.d;
-                doSnap = aSq + E > 1 && aSq - E < 1 && dSq + E > 1 && dSq - E < 1;
-            }
-            else if (matrix.a + E > 0 && matrix.a - E < 0 && matrix.d + E > 0 && matrix.d - E < 0)
-            {
-                bSq = matrix.b * matrix.b;
-                cSq = matrix.c * matrix.c;
-                doSnap = bSq + E > 1 && bSq - E < 1 && cSq + E > 1 && cSq - E < 1;
-            }
-
-            if (doSnap)
-            {
-                matrix.tx = Math.round(matrix.tx / pixelSize) * pixelSize;
-                matrix.ty = Math.round(matrix.ty / pixelSize) * pixelSize;
-            }
         }
 
         /** Sets the style that is used to render the mesh. Styles (which are always subclasses of
@@ -140,14 +107,16 @@ package starling.display
          *  Do not use the same style instance on multiple objects! Instead, make use of
          *  <code>style.clone()</code> to assign an identical style to multiple meshes.</p>
          *
-         *  @param meshStyle             the style to assign. If <code>null</code>, an instance of
-         *                               a standard <code>MeshStyle</code> will be created.
+         *  @param meshStyle             the style to assign. If <code>null</code>, the default
+         *                               style will be created.
          *  @param mergeWithPredecessor  if enabled, all attributes of the previous style will be
          *                               be copied to the new one, if possible.
+         *  @see #defaultStyle
+         *  @see #defaultStyleFactory
          */
         public function setStyle(meshStyle:MeshStyle=null, mergeWithPredecessor:Boolean=true):void
         {
-            if (meshStyle == null) meshStyle = new sDefaultStyle() as MeshStyle;
+            if (meshStyle == null) meshStyle = createDefaultMeshStyle();
             else if (meshStyle == _style) return;
             else if (meshStyle.target) meshStyle.target.setStyle();
 
@@ -161,7 +130,42 @@ package starling.display
             _style.setTarget(this, _vertexData, _indexData);
         }
 
+        private function createDefaultMeshStyle():MeshStyle
+        {
+            var meshStyle:MeshStyle;
+
+            if (sDefaultStyleFactory != null)
+            {
+                if (sDefaultStyleFactory.length == 0) meshStyle = sDefaultStyleFactory();
+                else meshStyle = sDefaultStyleFactory(this);
+            }
+
+            if (meshStyle == null)
+                meshStyle = new sDefaultStyle() as MeshStyle;
+
+            return meshStyle;
+        }
+
         // vertex manipulation
+
+        /** The position of the vertex at the specified index, in the mesh's local coordinate
+         *  system.
+         *
+         *  <p>Only modify the position of a vertex if you know exactly what you're doing, as
+         *  some classes might not work correctly when their vertices are moved. E.g. the
+         *  <code>Quad</code> class expects its vertices to spawn up a perfectly rectangular
+         *  area; some of its optimized methods won't work correctly if that premise is no longer
+         *  fulfilled or the original bounds change.</p>
+         */
+        public function getVertexPosition(vertexID:int, out:Point=null):Point
+        {
+            return _style.getVertexPosition(vertexID, out);
+        }
+
+        public function setVertexPosition(vertexID:int, x:Number, y:Number):void
+        {
+            _style.setVertexPosition(vertexID, x, y);
+        }
 
         /** Returns the alpha value of the vertex at the specified index. */
         public function getVertexAlpha(vertexID:int):Number
@@ -237,10 +241,15 @@ package starling.display
         public function get textureSmoothing():String { return _style.textureSmoothing; }
         public function set textureSmoothing(value:String):void { _style.textureSmoothing = value; }
 
-        /** Controls whether or not the mesh object is snapped to the nearest pixel. This
-         *  can prevent the object from looking blurry when it's not exactly aligned with the
-         *  pixels of the screen. For this to work, the object must be unscaled and may only
-         *  be rotated by multiples of 90 degrees. @default true */
+        /** Indicates if pixels at the edges will be repeated or clamped. Only works for
+         *  power-of-two textures; for a solution that works with all kinds of textures,
+         *  see <code>Image.tileGrid</code>. @default false */
+        public function get textureRepeat():Boolean { return _style.textureRepeat; }
+        public function set textureRepeat(value:Boolean):void { _style.textureRepeat = value; }
+
+        /** Controls whether or not the instance snaps to the nearest pixel. This can prevent the
+         *  object from looking blurry when it's not exactly aligned with the pixels of the screen.
+         *  @default false */
         public function get pixelSnapping():Boolean { return _pixelSnapping; }
         public function set pixelSnapping(value:Boolean):void { _pixelSnapping = value; }
 
@@ -266,6 +275,26 @@ package starling.display
         public static function set defaultStyle(value:Class):void
         {
             sDefaultStyle = value;
+        }
+
+        /** A factory method that is used to create the 'MeshStyle' for a mesh if no specific
+         *  style is provided. That's useful if you are creating a hierarchy of objects, all
+         *  of which need to have a certain style. Different to the <code>defaultStyle</code>
+         *  property, this method allows plugging in custom logic and passing arguments to the
+         *  constructor. Return <code>null</code> to fall back to the default behavior (i.e.
+         *  to instantiate <code>defaultStyle</code>). The <code>mesh</code>-parameter is optional
+         *  and may be omitted.
+         *
+         *  <listing>
+         *  Mesh.defaultStyleFactory = function(mesh:Mesh):MeshStyle
+         *  {
+         *      return new ColorizeMeshStyle(Math.random() * 0xffffff);
+         *  }</listing>
+         */
+        public static function get defaultStyleFactory():Function { return sDefaultStyleFactory; }
+        public static function set defaultStyleFactory(value:Function):void
+        {
+            sDefaultStyleFactory = value;
         }
     }
 }

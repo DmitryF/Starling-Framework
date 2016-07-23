@@ -25,24 +25,24 @@ package tests.rendering
             var vdf:VertexDataFormat = VertexDataFormat.fromString(STD_FORMAT);
 
             assertEquals( 2, vdf.getSizeIn32Bits("position"));
-            assertEquals( 8, vdf.getSizeInBytes("position"));
+            assertEquals( 8, vdf.getSize("position"));
             assertEquals( 2, vdf.getSizeIn32Bits("texCoords"));
-            assertEquals( 8, vdf.getSizeInBytes("texCoords"));
+            assertEquals( 8, vdf.getSize("texCoords"));
             assertEquals( 1, vdf.getSizeIn32Bits("color"));
-            assertEquals( 4, vdf.getSizeInBytes("color"));
+            assertEquals( 4, vdf.getSize("color"));
             assertEquals( 5, vdf.vertexSizeIn32Bits);
-            assertEquals(20, vdf.vertexSizeInBytes);
+            assertEquals(20, vdf.vertexSize);
 
             assertEquals("float2", vdf.getFormat("position"));
             assertEquals("float2", vdf.getFormat("texCoords"));
             assertEquals("bytes4", vdf.getFormat("color"));
 
             assertEquals( 0, vdf.getOffsetIn32Bits("position"));
-            assertEquals( 0, vdf.getOffsetInBytes("position"));
+            assertEquals( 0, vdf.getOffset("position"));
             assertEquals( 2, vdf.getOffsetIn32Bits("texCoords"));
-            assertEquals( 8, vdf.getOffsetInBytes("texCoords"));
+            assertEquals( 8, vdf.getOffset("texCoords"));
             assertEquals( 4, vdf.getOffsetIn32Bits("color"));
-            assertEquals(16, vdf.getOffsetInBytes("color"));
+            assertEquals(16, vdf.getOffset("color"));
 
             assertEquals(STD_FORMAT, vdf.formatString);
         }
@@ -74,6 +74,18 @@ package tests.rendering
             var normalizedFormat:String = "position:float2, color:bytes4";
             var vdf:VertexDataFormat = VertexDataFormat.fromString(format);
             assertEquals(normalizedFormat, vdf.formatString);
+        }
+
+        [Test]
+        public function testExtend():void
+        {
+            var formatString:String = "position:float2";
+            var baseFormat:VertexDataFormat = VertexDataFormat.fromString(formatString);
+            var exFormat:VertexDataFormat = baseFormat.extend("color:float4");
+            assertEquals("position:float2, color:float4", exFormat.formatString);
+            assertEquals(2, exFormat.numAttributes);
+            assertEquals("float2", exFormat.getFormat("position"));
+            assertEquals("float4", exFormat.getFormat("color"));
         }
 
         [Test(expects="Error")]

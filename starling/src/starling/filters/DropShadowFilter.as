@@ -24,12 +24,24 @@ package starling.filters
         private var _distance:Number;
         private var _angle:Number;
 
-        /** Creates a new DropShadowFilter instance with the specified parameters. */
+        /** Creates a new DropShadowFilter instance with the specified parameters.
+         *
+         * @param distance   the offset distance of the shadow, in points.
+         * @param angle      the angle with which the shadow is offset, in radians.
+         * @param color      the color of the shadow.
+         * @param alpha      the alpha value of the shadow. Values between 0 and 1 modify the
+         *                   opacity; values > 1 will make it stronger, i.e. produce a harder edge.
+         * @param blur       the amount of blur with which the shadow is created. Note that high
+         *                   values will cause the number of render passes to grow.
+         * @param resolution the resolution of the filter texture. '1' means full resolution,
+         *                   '0.5' half resolution, etc.
+         */
         public function DropShadowFilter(distance:Number=4.0, angle:Number=0.785,
-                                         color:uint=0x0, alpha:Number=0.5, blur:Number=1.0)
+                                         color:uint=0x0, alpha:Number=0.5, blur:Number=1.0,
+                                         resolution:Number=0.5)
         {
             _compositeFilter = new CompositeFilter();
-            _blurFilter = new BlurFilter(blur, blur);
+            _blurFilter = new BlurFilter(blur, blur, resolution);
             _distance = distance;
             _angle = angle;
 
@@ -49,14 +61,20 @@ package starling.filters
         }
 
         /** @private */
-        override public function process(painter:Painter, pool:ITexturePool,
+        override public function process(painter:Painter, helper:IFilterHelper,
                                          input0:Texture = null, input1:Texture = null,
                                          input2:Texture = null, input3:Texture = null):Texture
         {
-            var shadow:Texture = _blurFilter.process(painter, pool, input0);
-            var result:Texture = _compositeFilter.process(painter, pool, shadow, input0);
-            pool.putTexture(shadow);
+            var shadow:Texture = _blurFilter.process(painter, helper, input0);
+            var result:Texture = _compositeFilter.process(painter, helper, shadow, input0);
+            helper.putTexture(shadow);
             return result;
+        }
+
+        /** @private */
+        override public function get numPasses():int
+        {
+            return _blurFilter.numPasses + _compositeFilter.numPasses;
         }
 
         private function updatePadding():void
@@ -89,7 +107,8 @@ package starling.filters
             }
         }
 
-        /** The alpha value of the shadow. @default 0.5 */
+        /** The alpha value of the shadow. Values between 0 and 1 modify the opacity;
+         *  values > 1 will make it stronger, i.e. produce a harder edge. @default 0.5 */
         public function get alpha():Number { return _compositeFilter.getAlphaAt(0); }
         public function set alpha(value:Number):void
         {
@@ -107,6 +126,7 @@ package starling.filters
             if (_distance != value)
             {
                 _distance = value;
+                setRequiresRedraw();
                 updatePadding();
             }
         }
@@ -118,6 +138,7 @@ package starling.filters
             if (_angle != value)
             {
                 _angle = value;
+                setRequiresRedraw();
                 updatePadding();
             }
         }
@@ -131,6 +152,19 @@ package starling.filters
             if (blur != value)
             {
                 _blurFilter.blurX = _blurFilter.blurY = value;
+                setRequiresRedraw();
+                updatePadding();
+            }
+        }
+
+        /** @private */
+        override public function get resolution():Number { return _blurFilter.resolution; }
+        override public function set resolution(value:Number):void
+        {
+            if (resolution != value)
+            {
+                _blurFilter.resolution = value;
+                setRequiresRedraw();
                 updatePadding();
             }
         }

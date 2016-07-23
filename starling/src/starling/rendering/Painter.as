@@ -23,6 +23,7 @@ package starling.rendering
     import flash.geom.Vector3D;
     import flash.utils.Dictionary;
 
+    import starling.core.starling_internal;
     import starling.display.BlendMode;
     import starling.display.DisplayObject;
     import starling.display.Mesh;
@@ -37,6 +38,8 @@ package starling.rendering
     import starling.utils.RectangleUtil;
     import starling.utils.RenderUtil;
     import starling.utils.SystemUtil;
+
+    use namespace starling_internal;
 
     /** A class that orchestrates rendering of all Starling display objects.
      *
@@ -71,13 +74,14 @@ package starling.rendering
      */
     public class Painter
     {
+        // the key for the programs stored in 'sharedData'
+        private static const PROGRAM_DATA_NAME:String = "starling.rendering.Painter.Programs";
+
         // members
 
         private var _stage3D:Stage3D;
         private var _context:Context3D;
         private var _shareContext:Boolean;
-        private var _programs:Dictionary;
-        private var _data:Dictionary;
         private var _drawCount:int;
         private var _frameID:uint;
         private var _pixelSize:Number;
@@ -86,6 +90,7 @@ package starling.rendering
         private var _clipRectStack:Vector.<Rectangle>;
         private var _batchProcessor:BatchProcessor;
         private var _batchCache:BatchProcessor;
+        private var _batchCacheExclusions:Vector.<DisplayObject>;
 
         private var _actualRenderTarget:TextureBase;
         private var _actualCulling:String;
@@ -98,10 +103,15 @@ package starling.rendering
         private var _state:RenderState;
         private var _stateStack:Vector.<RenderState>;
         private var _stateStackPos:int;
+        private var _stateStackLength:int;
+
+        // shared data
+        private static var sSharedData:Dictionary = new Dictionary();
 
         // helper objects
         private static var sMatrix:Matrix = new Matrix();
         private static var sPoint3D:Vector3D = new Vector3D();
+        private static var sMatrix3D:Matrix3D = new Matrix3D();
         private static var sClipRect:Rectangle = new Rectangle();
         private static var sBufferRect:Rectangle = new Rectangle();
         private static var sScissorRect:Rectangle = new Rectangle();
@@ -122,22 +132,22 @@ package starling.rendering
             _backBufferScaleFactor = _pixelSize = 1.0;
             _stencilReferenceValues = new Dictionary(true);
             _clipRectStack = new <Rectangle>[];
-            _programs = new Dictionary();
-            _data = new Dictionary();
 
             _batchProcessor = new BatchProcessor();
             _batchProcessor.onBatchComplete = drawBatch;
 
             _batchCache = new BatchProcessor();
             _batchCache.onBatchComplete = drawBatch;
+            _batchCacheExclusions = new Vector.<DisplayObject>();
 
             _state = new RenderState();
             _state.onDrawRequired = finishMeshBatch;
             _stateStack = new <RenderState>[];
             _stateStackPos = -1;
+            _stateStackLength = 0;
         }
         
-        /** Disposes all quad batches, programs, and - if it is not being shared -
+        /** Disposes all mesh batches, programs, and - if it is not being shared -
          *  the render context. */
         public function dispose():void
         {
@@ -145,10 +155,10 @@ package starling.rendering
             _batchCache.dispose();
 
             if (!_shareContext)
+            {
                 _context.dispose(false);
-
-            for each (var program:Program in _programs)
-                program.dispose();
+                sSharedData = new Dictionary();
+            }
         }
 
         // context handling
@@ -177,6 +187,10 @@ package starling.rendering
         /** Sets the viewport dimensions and other attributes of the rendering buffer.
          *  Starling will call this method internally, so most apps won't need to mess with this.
          *
+         *  <p>Beware: if <code>shareContext</code> is enabled, the method will only update the
+         *  painter's context-related information (like the size of the back buffer), but won't
+         *  make any actual changes to the context.</p>
+         *
          * @param viewPort                the position and size of the area that should be rendered
          *                                into, in pixels.
          * @param contentScaleFactor      only relevant for Desktop (!) HiDPI screens. If you want
@@ -191,19 +205,31 @@ package starling.rendering
         public function configureBackBuffer(viewPort:Rectangle, contentScaleFactor:Number,
                                             antiAlias:int, enableDepthAndStencil:Boolean):void
         {
-            enableDepthAndStencil &&= SystemUtil.supportsDepthAndStencil;
+            if (!_shareContext)
+            {
+                enableDepthAndStencil &&= SystemUtil.supportsDepthAndStencil;
 
-            // Changing the stage3D position might move the back buffer to invalid bounds
-            // temporarily. To avoid problems, we set it to the smallest possible size first.
+                // Changing the stage3D position might move the back buffer to invalid bounds
+                // temporarily. To avoid problems, we set it to the smallest possible size first.
 
-            if (_context.profile == "baselineConstrained")
-                _context.configureBackBuffer(32, 32, antiAlias, enableDepthAndStencil);
+                if (_context.profile == "baselineConstrained")
+                    _context.configureBackBuffer(32, 32, antiAlias, enableDepthAndStencil);
 
-            _stage3D.x = viewPort.x;
-            _stage3D.y = viewPort.y;
+                // If supporting HiDPI mode would exceed the maximum buffer size
+                // (can happen e.g in software mode), we stick to the low resolution.
 
-            _context.configureBackBuffer(viewPort.width, viewPort.height,
+                if (viewPort.width  * contentScaleFactor > _context.maxBackBufferWidth ||
+                    viewPort.height * contentScaleFactor > _context.maxBackBufferHeight)
+                {
+                    contentScaleFactor = 1.0;
+                }
+
+                _stage3D.x = viewPort.x;
+                _stage3D.y = viewPort.y;
+
+                _context.configureBackBuffer(viewPort.width, viewPort.height,
                     antiAlias, enableDepthAndStencil, contentScaleFactor != 1.0);
+            }
 
             _backBufferWidth  = viewPort.width;
             _backBufferHeight = viewPort.height;
@@ -217,7 +243,7 @@ package starling.rendering
         public function registerProgram(name:String, program:Program):void
         {
             deleteProgram(name);
-            _programs[name] = program;
+            programs[name] = program;
         }
 
         /** Deletes the program of a certain name. */
@@ -227,7 +253,7 @@ package starling.rendering
             if (program)
             {
                 program.dispose();
-                delete _programs[name];
+                delete programs[name];
             }
         }
 
@@ -235,14 +261,13 @@ package starling.rendering
          *  this name has been registered. */
         public function getProgram(name:String):Program
         {
-            if (name in _programs) return _programs[name];
-            else return null;
+            return programs[name] as Program;
         }
 
         /** Indicates if a program is registered under a certain name. */
         public function hasProgram(name:String):Boolean
         {
-            return name in _programs;
+            return name in programs;
         }
 
         // state stack
@@ -257,7 +282,7 @@ package starling.rendering
         {
             _stateStackPos++;
 
-            if (_stateStack.length < _stateStackPos + 1) _stateStack[_stateStackPos] = new RenderState();
+            if (_stateStackLength < _stateStackPos + 1) _stateStack[_stateStackLength++] = new RenderState();
             if (token) _batchProcessor.fillToken(token);
 
             _stateStack[_stateStackPos].copyFrom(_state);
@@ -273,8 +298,8 @@ package starling.rendering
         public function setStateTo(transformationMatrix:Matrix, alphaFactor:Number=1.0,
                                    blendMode:String="auto"):void
         {
-            if (transformationMatrix) _state.transformModelviewMatrix(transformationMatrix);
-            if (alphaFactor != 1.0) _state.alpha *= alphaFactor;
+            if (transformationMatrix) MatrixUtil.prependMatrix(_state._modelviewMatrix, transformationMatrix);
+            if (alphaFactor != 1.0) _state._alpha *= alphaFactor;
             if (blendMode != BlendMode.AUTO) _state.blendMode = blendMode;
         }
 
@@ -310,14 +335,18 @@ package starling.rendering
          *  state instead of utilizing the stencil buffer. This is possible when the mask object
          *  is of type <code>starling.display.Quad</code> and is aligned parallel to the stage
          *  axes.</p>
+         *
+         *  <p>Note that masking breaks the render cache; the masked object must be redrawn anew
+         *  in the next frame. If you pass <code>maskee</code>, the method will automatically
+         *  call <code>excludeFromCache(maskee)</code> for you.</p>
          */
-        public function drawMask(mask:DisplayObject):void
+        public function drawMask(mask:DisplayObject, maskee:DisplayObject=null):void
         {
             if (_context == null) return;
 
             finishMeshBatch();
 
-            if (isRectangularMask(mask, sMatrix))
+            if (isRectangularMask(mask, maskee, sMatrix))
             {
                 mask.getBounds(mask, sClipRect);
                 RectangleUtil.getBounds(sClipRect, sMatrix, sClipRect);
@@ -334,6 +363,8 @@ package starling.rendering
                 _context.setStencilActions(Context3DTriangleFace.FRONT_AND_BACK,
                     Context3DCompareMode.EQUAL, Context3DStencilAction.KEEP);
             }
+
+            excludeFromCache(maskee);
         }
 
         /** Draws a display object into the stencil buffer, decrementing the
@@ -344,13 +375,13 @@ package starling.rendering
          *  it will be assumed that this erase operation undoes the clipping rectangle change
          *  caused by the corresponding <code>drawMask()</code> call.</p>
          */
-        public function eraseMask(mask:DisplayObject):void
+        public function eraseMask(mask:DisplayObject, maskee:DisplayObject=null):void
         {
             if (_context == null) return;
 
             finishMeshBatch();
 
-            if (isRectangularMask(mask, sMatrix))
+            if (isRectangularMask(mask, maskee, sMatrix))
             {
                 popClipRect();
             }
@@ -372,10 +403,24 @@ package starling.rendering
             pushState();
             _state.alpha = 0.0;
 
+            var matrix:Matrix = null;
+            var matrix3D:Matrix3D = null;
+
             if (mask.stage)
-                mask.getTransformationMatrix(null, _state.modelviewMatrix);
+            {
+                _state.setModelviewMatricesToIdentity();
+
+                if (mask.is3D) matrix3D = mask.getTransformationMatrix3D(null, sMatrix3D);
+                else           matrix   = mask.getTransformationMatrix(null, sMatrix);
+            }
             else
-                _state.transformModelviewMatrix(mask.transformationMatrix);
+            {
+                if (mask.is3D) matrix3D = mask.transformationMatrix3D;
+                else           matrix   = mask.transformationMatrix;
+            }
+
+            if (matrix3D) _state.transformModelviewMatrix3D(matrix3D);
+            else          _state.transformModelviewMatrix(matrix);
 
             mask.render(this);
             finishMeshBatch();
@@ -412,13 +457,15 @@ package starling.rendering
         }
 
         /** Figures out if the mask can be represented by a scissor rectangle; this is possible
-         *  if it's just a simple quad that is parallel to the stage axes. The 'out' parameter
-         *  will be filled with the transformation matrix required to move the mask into stage
-         *  coordinates. */
-        private function isRectangularMask(mask:DisplayObject, out:Matrix):Boolean
+         *  if it's just a simple (untextured) quad that is parallel to the stage axes. The 'out'
+         *  parameter will be filled with the transformation matrix required to move the mask into
+         *  stage coordinates. */
+        private function isRectangularMask(mask:DisplayObject, maskee:DisplayObject, out:Matrix):Boolean
         {
             var quad:Quad = mask as Quad;
-            if (quad && !quad.is3D && quad.style.type == MeshStyle)
+            var is3D:Boolean = mask.is3D || (maskee && maskee.is3D && mask.stage == null);
+
+            if (quad && !is3D && quad.texture == null)
             {
                 if (mask.stage) mask.getTransformationMatrix(null, out);
                 else
@@ -463,6 +510,7 @@ package starling.rendering
             _batchProcessor.finishBatch();
             swapBatchProcessors();
             _batchProcessor.clear();
+            processCacheExclusions();
         }
 
         private function swapBatchProcessors():void
@@ -472,16 +520,28 @@ package starling.rendering
             _batchCache = tmp;
         }
 
+        private function processCacheExclusions():void
+        {
+            var i:int, length:int = _batchCacheExclusions.length;
+            for (i=0; i<length; ++i) _batchCacheExclusions[i].excludeFromCache();
+            _batchCacheExclusions.length = 0;
+        }
+
         /** Resets the current state, state stack, batch processor, stencil reference value,
          *  clipping rectangle, and draw count. Furthermore, depth testing is disabled. */
         public function nextFrame():void
         {
+            // enforce reset of basic context settings
+            _actualBlendMode = null;
+            _actualCulling = null;
+            _context.setDepthTest(false, Context3DCompareMode.ALWAYS);
+
+            // reset everything else
             stencilReferenceValue = 0;
             _clipRectStack.length = 0;
             _drawCount = 0;
             _stateStackPos = -1;
             _batchProcessor.clear();
-            _context.setDepthTest(false, Context3DCompareMode.ALWAYS);
             _state.reset();
         }
 
@@ -518,7 +578,8 @@ package starling.rendering
 
                     if (subset.numVertices)
                     {
-                        setStateTo(null, 1.0, meshBatch.blendMode);
+                        _state.alpha = 1.0;
+                        _state.blendMode = meshBatch.blendMode;
                         _batchProcessor.addMesh(meshBatch, _state, subset, true);
                     }
                 }
@@ -533,6 +594,19 @@ package starling.rendering
         public function rewindCacheTo(token:BatchToken):void
         {
             _batchProcessor.rewindTo(token);
+        }
+
+        /** Prevents the object from being drawn from the render cache in the next frame.
+         *  Different to <code>setRequiresRedraw()</code>, this does not indicate that the object
+         *  has changed in any way, but just that it doesn't support being drawn from cache.
+         *
+         *  <p>Note that when a container is excluded from the render cache, its children will
+         *  still be cached! This just means that batching is interrupted at this object when
+         *  the display tree is traversed.</p>
+         */
+        public function excludeFromCache(object:DisplayObject):void
+        {
+            if (object) _batchCacheExclusions[_batchCacheExclusions.length] = object;
         }
 
         private function drawBatch(meshBatch:MeshBatch):void
@@ -773,10 +847,29 @@ package starling.rendering
         }
 
         /** A dictionary that can be used to save custom data related to the render context.
-         *  If you need to share data that is bound to the render context (e.g. textures),
-         *  use this dictionary instead of creating a static class variable.
-         *  That way, the data will be available for all Starling instances that use this
-         *  painter / stage3D / context. */
-        public function get sharedData():Dictionary { return _data; }
+         *  If you need to share data that is bound to the render context (e.g. textures), use
+         *  this dictionary instead of creating a static class variable. That way, the data will
+         *  be available for all Starling instances that use this stage3D / context. */
+        public function get sharedData():Dictionary
+        {
+            var data:Dictionary = sSharedData[stage3D] as Dictionary;
+            if (data == null)
+            {
+                data = new Dictionary();
+                sSharedData[stage3D] = data;
+            }
+            return data;
+        }
+
+        private function get programs():Dictionary
+        {
+            var programs:Dictionary = sharedData[PROGRAM_DATA_NAME] as Dictionary;
+            if (programs == null)
+            {
+                programs = new Dictionary();
+                sharedData[PROGRAM_DATA_NAME] = programs;
+            }
+            return programs;
+        }
     }
 }

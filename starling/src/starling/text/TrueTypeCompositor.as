@@ -18,13 +18,15 @@ package starling.text
     import starling.display.Quad;
     import starling.textures.Texture;
     import starling.utils.Align;
+    import starling.utils.SystemUtil;
 
-    /** @private
+    /** This text compositor uses a Flash TextField to render system- or embedded fonts into
+     *  a texture.
      *
-     *  <p>This text compositor uses a Flash TextField to render system- or embedded fonts into
-     *  a texture.</p>
+     *  <p>You typically don't have to instantiate this class. It will be used internally by
+     *  Starling's text fields.</p>
      */
-    internal class TrueTypeCompositor implements ITextCompositor
+    public class TrueTypeCompositor implements ITextCompositor
     {
         // helpers
         private static var sHelperMatrix:Matrix = new Matrix();
@@ -34,7 +36,7 @@ package starling.text
 
         /** Creates a new TrueTypeCompositor instance. */
         public function TrueTypeCompositor()
-        {}
+        { }
 
         /** @inheritDoc */
         public function fillMeshBatch(meshBatch:MeshBatch, width:Number, height:Number, text:String,
@@ -91,6 +93,7 @@ package starling.text
             format.toNativeFormat(sNativeFormat);
 
             sNativeFormat.size = Number(sNativeFormat.size) * options.textureScale;
+            sNativeTextField.embedFonts = SystemUtil.isEmbeddedFont(format.font, format.bold, format.italic);
             sNativeTextField.defaultTextFormat = sNativeFormat;
             sNativeTextField.width  = scaledWidth;
             sNativeTextField.height = scaledHeight;
@@ -101,12 +104,6 @@ package starling.text
 
             if (options.isHtmlText) sNativeTextField.htmlText = text;
             else                    sNativeTextField.text     = text;
-
-            sNativeTextField.embedFonts = true;
-
-            // we try embedded fonts first, non-embedded fonts are just a fallback
-            if (sNativeTextField.textWidth == 0.0 || sNativeTextField.textHeight == 0.0)
-                sNativeTextField.embedFonts = false;
 
             if (options.autoScale)
                 autoScaleNativeTextField(sNativeTextField, text, options.isHtmlText);

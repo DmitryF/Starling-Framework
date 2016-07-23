@@ -188,7 +188,8 @@ package starling.display
         /** @private */
         internal function addEnterFrameListener(listener:DisplayObject):void
         {
-            _enterFrameListeners.push(listener);
+            var index:int = _enterFrameListeners.indexOf(listener);
+            if (index < 0)  _enterFrameListeners[_enterFrameListeners.length] = listener;
         }
         
         /** @private */
@@ -286,6 +287,18 @@ package starling.display
          *  to the <code>viewPort</code> property of the Starling object. */
         public function get stageHeight():int { return _height; }
         public function set stageHeight(value:int):void { _height = value; }
+
+        /** The Starling instance this stage belongs to. */
+        public function get starling():Starling
+        {
+            var instances:Vector.<Starling> = Starling.all;
+            var numInstances:int = instances.length;
+
+            for (var i:int=0; i<numInstances; ++i)
+                if (instances[i].stage == this) return instances[i];
+
+            return null;
+        }
 
         /** The distance between the stage and the camera. Changing this value will update the
          *  field of view accordingly. */

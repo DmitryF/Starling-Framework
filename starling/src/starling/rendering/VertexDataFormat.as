@@ -41,7 +41,7 @@ package starling.rendering
      *
      *  @see VertexData
      */
-     public class VertexDataFormat
+    public class VertexDataFormat
     {
         private var _format:String;
         private var _vertexSize:int;
@@ -104,10 +104,17 @@ package starling.rendering
             }
         }
 
+        /** Creates a new VertexDataFormat instance by appending the given format string
+         *  to the current instance's format. */
+        public function extend(format:String):VertexDataFormat
+        {
+            return fromString(_format + ", " + format);
+        }
+
         // query methods
 
         /** Returns the size of a certain vertex attribute in bytes. */
-        public function getSizeInBytes(attrName:String):int
+        public function getSize(attrName:String):int
         {
             return getAttribute(attrName).size;
         }
@@ -119,7 +126,7 @@ package starling.rendering
         }
 
         /** Returns the offset (in bytes) of an attribute within a vertex. */
-        public function getOffsetInBytes(attrName:String):int
+        public function getOffset(attrName:String):int
         {
             return getAttribute(attrName).offset;
         }
@@ -248,7 +255,7 @@ package starling.rendering
         }
 
         /** The size (in bytes) of each vertex. */
-        public function get vertexSizeInBytes():int
+        public function get vertexSize():int
         {
             return _vertexSize;
         }

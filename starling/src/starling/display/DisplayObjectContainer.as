@@ -145,13 +145,13 @@ package starling.display
             }
         }
         
-        /** Removes a child from the container. If the object is not a child, nothing happens. 
-         *  If requested, the child will be disposed right away. */
+        /** Removes a child from the container. If the object is not a child, the method returns
+         *  <code>null</code>. If requested, the child will be disposed right away. */
         public function removeChild(child:DisplayObject, dispose:Boolean=false):DisplayObject
         {
             var childIndex:int = getChildIndex(child);
-            if (childIndex != -1) removeChildAt(childIndex, dispose);
-            return child;
+            if (childIndex != -1) return removeChildAt(childIndex, dispose);
+            else return null;
         }
         
         /** Removes a child at a certain index. The index positions of any display objects above
@@ -356,11 +356,16 @@ package starling.display
             for (var i:int=0; i<numChildren; ++i)
             {
                 var child:DisplayObject = _children[i];
+                var filter:FragmentFilter = child._filter;
+                var mask:DisplayObject = child._mask;
 
                 if (child._hasVisibleArea)
                 {
                     if (selfOrParentChanged)
+                    {
                         child._lastParentOrSelfChangeFrameID = frameID;
+                        if (mask) mask._lastParentOrSelfChangeFrameID = frameID;
+                    }
 
                     if (child._lastParentOrSelfChangeFrameID != frameID &&
                         child._lastChildChangeFrameID != frameID &&
@@ -374,18 +379,15 @@ package starling.display
                     }
                     else
                     {
-                        var mask:DisplayObject = child._mask;
-                        var filter:FragmentFilter = child._filter;
-
                         painter.pushState(child._pushToken);
                         painter.setStateTo(child.transformationMatrix, child.alpha, child.blendMode);
 
-                        if (mask) painter.drawMask(mask);
+                        if (mask) painter.drawMask(mask, child);
 
                         if (filter) filter.render(painter);
                         else        child.render(painter);
 
-                        if (mask) painter.eraseMask(mask);
+                        if (mask) painter.eraseMask(mask, child);
 
                         painter.popState(child._popToken);
                     }

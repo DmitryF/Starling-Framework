@@ -91,7 +91,7 @@ package starling.rendering
      *
      *  @see FilterEffect
      *  @see MeshEffect
-     *  @see starling.rendering.MeshStyle
+     *  @see starling.styles.MeshStyle
      *  @see starling.filters.FragmentFilter
      *  @see starling.utils.RenderUtil
      */
@@ -102,10 +102,11 @@ package starling.rendering
         public static const VERTEX_FORMAT:VertexDataFormat =
             VertexDataFormat.fromString("position:float2");
 
+        private var _vertexBuffer:VertexBuffer3D;
+        private var _vertexBufferSize:int; // in bytes
         private var _indexBuffer:IndexBuffer3D;
         private var _indexBufferSize:int;  // in number of indices
-        private var _vertexBuffer:VertexBuffer3D;
-        private var _vertexBufferSize:int; // in blocks of 32 bits
+        private var _indexBufferUsesQuadLayout:Boolean;
 
         private var _mvpMatrix3D:Matrix3D;
         private var _onRestore:Function;
@@ -138,55 +139,83 @@ package starling.rendering
             execute(_onRestore, this);
         }
 
-        /** Purges one or both of the index- and vertex-buffers. */
-        public function purgeBuffers(indexBuffer:Boolean=true, vertexBuffer:Boolean=true):void
+        /** Purges one or both of the vertex- and index-buffers. */
+        public function purgeBuffers(vertexBuffer:Boolean=true, indexBuffer:Boolean=true):void
         {
-            if (_indexBuffer && indexBuffer)
-            {
-                _indexBuffer.dispose();
-                _indexBuffer = null;
-            }
+            // We wrap the dispose calls in a try/catch block to work around a stage3D problem.
+            // Since they are not re-used later, that shouldn't have any evil side effects.
 
             if (_vertexBuffer && vertexBuffer)
             {
-                _vertexBuffer.dispose();
+                try { _vertexBuffer.dispose(); } catch (e:Error) {}
                 _vertexBuffer = null;
+            }
+
+            if (_indexBuffer && indexBuffer)
+            {
+                try { _indexBuffer.dispose(); } catch (e:Error) {}
+                _indexBuffer = null;
             }
         }
 
         /** Uploads the given index data to the internal index buffer. If the buffer is too
-         *  small, a new one is created automatically. */
-        public function uploadIndexData(indexData:IndexData):void
+         *  small, a new one is created automatically.
+         *
+         *  @param indexData   The IndexData instance to upload.
+         *  @param bufferUsage The expected buffer usage. Use one of the constants defined in
+         *                     <code>Context3DBufferUsage</code>. Only used when the method call
+         *                     causes the creation of a new index buffer.
+         */
+        public function uploadIndexData(indexData:IndexData,
+                                        bufferUsage:String="staticDraw"):void
         {
+            var numIndices:int = indexData.numIndices;
+            var isQuadLayout:Boolean = indexData.useQuadLayout;
+            var wasQuadLayout:Boolean = _indexBufferUsesQuadLayout;
+
             if (_indexBuffer)
             {
-                if (indexData.numIndices <= _indexBufferSize)
-                    indexData.uploadToIndexBuffer(_indexBuffer);
+                if (numIndices <= _indexBufferSize)
+                {
+                    if (!isQuadLayout || !wasQuadLayout)
+                    {
+                        indexData.uploadToIndexBuffer(_indexBuffer);
+                        _indexBufferUsesQuadLayout = isQuadLayout && numIndices == _indexBufferSize;
+                    }
+                }
                 else
-                    purgeBuffers(true, false);
+                    purgeBuffers(false, true);
             }
             if (_indexBuffer == null)
             {
-                _indexBuffer = indexData.createIndexBuffer(true);
-                _indexBufferSize = indexData.numIndices;
+                _indexBuffer = indexData.createIndexBuffer(true, bufferUsage);
+                _indexBufferSize = numIndices;
+                _indexBufferUsesQuadLayout = isQuadLayout;
             }
         }
 
         /** Uploads the given vertex data to the internal vertex buffer. If the buffer is too
-         *  small, a new one is created automatically. */
-        public function uploadVertexData(vertexData:VertexData):void
+         *  small, a new one is created automatically.
+         *
+         *  @param vertexData  The VertexData instance to upload.
+         *  @param bufferUsage The expected buffer usage. Use one of the constants defined in
+         *                     <code>Context3DBufferUsage</code>. Only used when the method call
+         *                     causes the creation of a new vertex buffer.
+         */
+        public function uploadVertexData(vertexData:VertexData,
+                                         bufferUsage:String="staticDraw"):void
         {
             if (_vertexBuffer)
             {
-                if (vertexData.sizeIn32Bits <= _vertexBufferSize)
+                if (vertexData.size <= _vertexBufferSize)
                     vertexData.uploadToVertexBuffer(_vertexBuffer);
                 else
-                    purgeBuffers(false, true);
+                    purgeBuffers(true, false);
             }
             if (_vertexBuffer == null)
             {
-                _vertexBuffer = vertexData.createVertexBuffer(true);
-                _vertexBufferSize = vertexData.sizeIn32Bits;
+                _vertexBuffer = vertexData.createVertexBuffer(true, bufferUsage);
+                _vertexBufferSize = vertexData.size;
             }
         }
 
@@ -197,7 +226,7 @@ package starling.rendering
          *  <code>afterDraw</code>, in this order. */
         public function render(firstIndex:int=0, numTriangles:int=-1):void
         {
-            if (numTriangles < 0) numTriangles = indexBufferSize / 3;
+            if (numTriangles < 0) numTriangles = _indexBufferSize / 3;
             if (numTriangles == 0) return;
 
             var context:Context3D = Starling.context;
@@ -339,7 +368,7 @@ package starling.rendering
 
         /** The internally used index buffer used on rendering. */
         protected function get indexBuffer():IndexBuffer3D { return _indexBuffer; }
-        
+
         /** The current size of the index buffer (in number of indices). */
         protected function get indexBufferSize():int { return _indexBufferSize; }
 

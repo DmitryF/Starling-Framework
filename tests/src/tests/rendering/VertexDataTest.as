@@ -41,13 +41,17 @@ package tests.rendering
             assertEquals(0, vd.numVertices);
 
             vd.setPoint(0, "position", 1, 2);
+            vd.setPoint(0, "texCoords", 0.1, 0.2)
             assertEquals(1, vd.numVertices);
             assertEquals(1.0, vd.getAlpha(0));
+            assertEquals(0xffffff, vd.getColor(0));
             Helpers.comparePoints(new Point(1, 2), vd.getPoint(0, "position"));
+            Helpers.comparePoints(new Point(0.1, 0.2), vd.getPoint(0, "texCoords"));
 
             vd.setAlpha(2, "color", 0.5);
             assertEquals(3, vd.numVertices);
             assertEquals(1.0, vd.getAlpha(1));
+            assertEquals(0xffffff, vd.getColor(1));
             assertThat(vd.getAlpha(2), closeTo(0.5, 0.003));
 
             vd.numVertices = 0;
@@ -57,7 +61,12 @@ package tests.rendering
             assertEquals(10, vd.numVertices);
 
             for (var i:int=0; i<10; ++i)
+            {
                 assertEquals(1.0, vd.getAlpha(i));
+                assertEquals(0xffffff, vd.getColor(i));
+                Helpers.comparePoints(vd.getPoint(i, "position"), new Point());
+                Helpers.comparePoints(vd.getPoint(i, "texCoords"), new Point());
+            }
         }
 
         [Test(expects="Error")]
@@ -119,10 +128,12 @@ package tests.rendering
             assertEquals(3, vd.numVertices);
             assertTrue(vd.premultipliedAlpha);
 
-            // per default, all alpha values should be '1.0'
-            assertEquals(1.0, vd.getAlpha(0, "color"));
-            assertEquals(1.0, vd.getAlpha(1, "color"));
-            assertEquals(1.0, vd.getAlpha(2, "color"));
+            // per default, colors must be white with full alpha
+            for (var i:int=0; i<3; ++i)
+            {
+                assertEquals(1.0, vd.getAlpha(i));
+                assertEquals(0xffffff, vd.getColor(i));
+            }
 
             vd.setColor(0, "color", 0xffaabb);
             vd.setColor(1, "color", 0x112233);
@@ -146,7 +157,7 @@ package tests.rendering
             assertEquals(alpha, vd.getAlpha(2, "color"));
 
             var data:ByteArray = vd.rawData;
-            var offset:int = (vd.vertexSizeInBytes * 2 + vd.getOffsetInBytes("color"));
+            var offset:int = (vd.vertexSize * 2 + vd.getOffset("color"));
 
             assertEquals(data[offset  ], int(red   * alpha));
             assertEquals(data[offset+1], int(green * alpha));
@@ -291,7 +302,7 @@ package tests.rendering
             assertEquals(4, vd2.numVertices);
 
             vd1.rawData.position = 0;
-            vd2.rawData.position = vd2.vertexSizeInBytes * 2;
+            vd2.rawData.position = vd2.vertexSize * 2;
 
             for (var i:int=0; i<2; ++i)
                 for (var j:int=0; j<vd2.vertexSizeIn32Bits; ++j)
@@ -325,8 +336,8 @@ package tests.rendering
             Helpers.comparePoints(vd1.getPoint(1, "texCoords"), vd3.getPoint(1, "texCoords"));
             Helpers.comparePoints(origin, vd3.getPoint(0, "position"));
             Helpers.comparePoints(origin, vd3.getPoint(1, "position"));
-            assertEquals(0x0, vd3.getColor(0, "color"));
-            assertEquals(0x0, vd3.getColor(1, "color"));
+            assertEquals(0xffffff, vd3.getColor(0, "color"));
+            assertEquals(0xffffff, vd3.getColor(1, "color"));
             assertEquals(1.0, vd3.getAlpha(0, "color"));
             assertEquals(1.0, vd3.getAlpha(1, "color"));
         }
@@ -410,6 +421,45 @@ package tests.rendering
         }
 
         [Test]
+        public function testTinted():void
+        {
+            var vd:VertexData = new VertexData(STD_FORMAT);
+            assertFalse(vd.tinted);
+
+            vd.numVertices = 1;
+            assertEquals(1.0, vd.getAlpha(0));
+            assertEquals(0xffffff, vd.getColor(0));
+            assertFalse(vd.tinted);
+
+            vd.setColor(0, "color", 0xff0000);
+            assertTrue(vd.tinted);
+
+            vd.colorize();
+            assertFalse(vd.tinted);
+
+            vd.setAlpha(0, "color", 0.5);
+            assertTrue(vd.tinted);
+
+            vd.colorize();
+            assertFalse(vd.tinted);
+
+            var vd2:VertexData = new VertexData(STD_FORMAT);
+            vd2.numVertices = 1;
+            vd2.colorize("color", 0xff00ff, 0.8);
+            assertTrue(vd2.tinted);
+
+            vd2.copyTo(vd, 1);
+            assertEquals(2, vd.numVertices);
+            assertTrue(vd.tinted);
+
+            vd.colorize();
+            assertFalse(vd.tinted);
+
+            vd.scaleAlphas("color", 0.5);
+            assertTrue(vd.tinted);
+        }
+
+        [Test]
         public function testChangeFormat():void
         {
             var vd:VertexData = new VertexData(STD_FORMAT);
@@ -425,8 +475,8 @@ package tests.rendering
             Helpers.comparePoints(p1, vd.getPoint(1, "position"));
             Helpers.comparePoints(new Point(), vd.getPoint(0, "newCoords"));
             Helpers.comparePoints(new Point(), vd.getPoint(1, "newCoords"));
-            assertEquals(0x0, vd.getColor(0, "newColor"));
-            assertEquals(0x0, vd.getColor(1, "newColor"));
+            assertEquals(0xffffff, vd.getColor(0, "newColor"));
+            assertEquals(0xffffff, vd.getColor(1, "newColor"));
             assertEquals(1.0, vd.getAlpha(0, "newColor"));
             assertEquals(1.0, vd.getAlpha(1, "newColor"));
         }

@@ -99,35 +99,21 @@ package starling.display
      *  create a matrix that represents the transformation of a point in one coordinate system to 
      *  another.</p> 
      *  
-     *  <strong>Subclassing</strong>
+     *  <strong>Customization</strong>
      *  
-     *  <p>Since DisplayObject is an abstract class, you cannot instantiate it directly, but have 
-     *  to use one of its subclasses instead. There are already a lot of them available, and most 
-     *  of the time they will suffice.</p> 
-     *  
-     *  <p>However, you can create custom subclasses as well. That way, you can create an object
-     *  with a custom render function. You will need to implement the following methods when you 
-     *  subclass DisplayObject:</p>
-     *  
-     *  <ul>
-     *    <li><code>function render(support:RenderSupport):void</code></li>
-     *    <li><code>function getBounds(targetSpace:DisplayObject, 
-     *                                 out:Rectangle=null):Rectangle</code></li>
-     *  </ul>
-     *  
-     *  <p>Have a look at the Quad class for a sample implementation of the 'getBounds' method.
-     *  For a sample on how to write a custom render function, you can have a look at this
-     *  <a href="http://wiki.starling-framework.org/manual/custom_display_objects">article</a>
-     *  in the Starling Wiki.</p> 
-     * 
-     *  <p>When you override the render method, it is important that you call the method
-     *  'finishQuadBatch' of the support object. This forces Starling to render all quads that 
-     *  were accumulated before by different render methods (for performance reasons). Otherwise, 
-     *  the z-ordering will be incorrect.</p> 
-     * 
+     *  <p>DisplayObject is an abstract class, which means you cannot instantiate it directly,
+     *  but have to use one of its many subclasses instead. For leaf nodes, this is typically
+     *  'Mesh' or its subclasses 'Quad' and 'Image'. To customize rendering of these objects,
+     *  you can use fragment filters (via the <code>filter</code>-property on 'DisplayObject')
+     *  or mesh styles (via the <code>style</code>-property on 'Mesh'). Look at the respective
+     *  class documentation for more information.</p>
+     *
      *  @see DisplayObjectContainer
      *  @see Sprite
-     *  @see Stage 
+     *  @see Stage
+     *  @see Mesh
+     *  @see starling.filters.FragmentFilter
+     *  @see starling.styles.MeshStyle
      */
     public class DisplayObject extends EventDispatcher
     {
@@ -148,7 +134,6 @@ package starling.display
         private var _blendMode:String;
         private var _name:String;
         private var _useHandCursor:Boolean;
-        private var _parent:DisplayObjectContainer;
         private var _transformationMatrix:Matrix;
         private var _transformationMatrix3D:Matrix3D;
         private var _orientationChanged:Boolean;
@@ -157,6 +142,7 @@ package starling.display
 
         // internal members (for fast access on rendering)
 
+        /** @private */ internal var _parent:DisplayObjectContainer;
         /** @private */ internal var _lastParentOrSelfChangeFrameID:uint;
         /** @private */ internal var _lastChildChangeFrameID:uint;
         /** @private */ internal var _tokenFrameID:uint;
@@ -397,7 +383,7 @@ package starling.display
             else if (verticalAlign == Align.BOTTOM) _pivotY = bounds.y + bounds.height;
             else throw new ArgumentError("Invalid vertical alignment: " + verticalAlign);
         }
-        
+
         // 3D transformation
 
         /** Creates a matrix that represents the transformation from the local coordinate system
@@ -510,7 +496,7 @@ package starling.display
         // internal methods
         
         /** @private */
-        internal function setParent(value:DisplayObjectContainer):void 
+        starling_internal function setParent(value:DisplayObjectContainer):void
         {
             // check for a recursion
             var ancestor:DisplayObject = value;
@@ -545,9 +531,9 @@ package starling.display
          *  custom mesh styles or any other custom rendering code, call this method if the object
          *  needs to be redrawn.</p>
          *
-         *  <p>If a class does not support the render cache (like <code>Sprite3D</code>),
-         *  it may override <code>supportsRenderCache</code>. That way, the object will be
-         *  redrawn automatically each frame.</p>
+         *  <p>If the object needs to be redrawn just because it does not support the render cache,
+         *  call <code>painter.excludeFromCache()</code> in the object's render method instead.
+         *  That way, Starling's <code>skipUnchangedFrames</code> policy won't be disrupted.</p>
          */
         public function setRequiresRedraw():void
         {
@@ -560,41 +546,38 @@ package starling.display
             while (parent && parent._lastChildChangeFrameID != frameID)
             {
                 parent._lastChildChangeFrameID = frameID;
+                if (parent._mask) parent._mask.setRequiresRedraw();
                 parent = parent._parent;
             }
+
+            if (_isMask) Starling.current.setRequiresRedraw(); // notify 'skipUnchangedFrames'
+            else if (_mask) _mask.setRequiresRedraw();         // propagate into mask
         }
 
-        /** Indicates if this class supports the render cache.
-         *  Subclasses that need to circumvent the cache have to override this method and call
-         *  <code>updateSupportsRenderCache</code> whenever that boolean changes. Don't forget
-         *  to combine the result with <code>super.supportsRenderCache</code> when overriding
-         *  the method!
-         *
-         *  <p>Note that when a container does not support the render cache, its children will
-         *  still be cached! This just means that batching is interrupted at this object when
-         *  the display tree is traversed.</p>
-         */
-        protected function get supportsRenderCache():Boolean
+        /** Indicates if the object needs to be redrawn in the upcoming frame, i.e. if it has
+         *  changed its location relative to the stage or some other aspect of its appearance
+         *  since it was last rendered. */
+        public function get requiresRedraw():Boolean
         {
-            return _mask == null;
+            var frameID:uint = Starling.frameID;
+
+            return _lastParentOrSelfChangeFrameID == frameID ||
+                   _lastChildChangeFrameID == frameID;
         }
 
-        /** Must be called when support for the render cache changes. The actual value is read
-         *  from the <code>supportsRenderCache</code> property. */
-        protected function updateSupportsRenderCache():void
+        /** @private Makes sure the object is not drawn from cache in the next frame.
+         *  This method is meant to be called only from <code>Painter.finishFrame()</code>,
+         *  since it requires rendering to be concluded. */
+        starling_internal function excludeFromCache():void
         {
-            if (supportsRenderCache)
-                removeEventListener(Event.ENTER_FRAME, onEnterFrameWithoutRenderCache);
-            else
-                addEventListener(Event.ENTER_FRAME, onEnterFrameWithoutRenderCache);
-        }
+            var object:DisplayObject = this;
+            var max:uint = 0xffffffff;
 
-        private function onEnterFrameWithoutRenderCache():void
-        {
-            // by wrapping 'setRequiresRedraw' in a private method, we can make sure that no
-            // subclasses are messing with this event handler.
-
-            setRequiresRedraw();
+            while (object && object._tokenFrameID != max)
+            {
+                object._tokenFrameID = max;
+                object = object._parent;
+            }
         }
 
         // helpers
@@ -674,7 +657,7 @@ package starling.display
         /** @inheritDoc */
         public override function removeEventListeners(type:String=null):void
         {
-            if ((type == null || type == Event.ENTER_FRAME) && hasEventListener(Event.ENTER_FRAME))
+            if ((type == null || type == Event.ENTER_FRAME) && hasEventListener(Event.ENTER_FRAME))
             {
                 removeEventListener(Event.ADDED_TO_STAGE, addEnterFrameListenerToStage);
                 removeEventListener(Event.REMOVED_FROM_STAGE, removeEnterFrameListenerFromStage);
@@ -843,10 +826,14 @@ package starling.display
         {
             // this method calls 'this.scaleX' instead of changing _scaleX directly.
             // that way, subclasses reacting on size changes need to override only the scaleX method.
-            
-            scaleX = 1.0;
-            var actualWidth:Number = width;
-            if (actualWidth != 0.0) scaleX = value / actualWidth;
+
+            var actualWidth:Number;
+            var scaleIsNaN:Boolean = _scaleX != _scaleX; // avoid 'isNaN' call
+
+            if (_scaleX == 0.0 || scaleIsNaN) { scaleX = 1.0; actualWidth = width; }
+            else actualWidth = Math.abs(width / _scaleX);
+
+            if (actualWidth) scaleX = value / actualWidth;
         }
         
         /** The height of the object in pixels.
@@ -855,9 +842,13 @@ package starling.display
         public function get height():Number { return getBounds(_parent, sHelperRect).height; }
         public function set height(value:Number):void
         {
-            scaleY = 1.0;
-            var actualHeight:Number = height;
-            if (actualHeight != 0.0) scaleY = value / actualHeight;
+            var actualHeight:Number;
+            var scaleIsNaN:Boolean = _scaleY != _scaleY; // avoid 'isNaN' call
+
+            if (_scaleY == 0.0 || scaleIsNaN) { scaleY = 1.0; actualHeight = height; }
+            else actualHeight = Math.abs(height / _scaleY);
+
+            if (actualHeight) scaleY = value / actualHeight;
         }
         
         /** The x coordinate of the object relative to the local coordinates of the parent. */
@@ -972,6 +963,12 @@ package starling.display
                 setOrientationChanged();
             }
         }
+
+        /** @private Indicates if the object is rotated or skewed in any way. */
+        internal function get isRotated():Boolean
+        {
+            return _rotation != 0.0 || _skewX != 0.0 || _skewY != 0.0;
+        }
         
         /** The opacity of the object. 0 = transparent, 1 = opaque. @default 1 */
         public function get alpha():Number { return _alpha; }
@@ -1017,12 +1014,19 @@ package starling.display
         public function get name():String { return _name; }
         public function set name(value:String):void { _name = value; }
         
-        /** The filter that is attached to the display object. The starling.filters
-         *  package contains several classes that define specific filters you can use. 
-         *  Beware that a filter should NOT be attached to different objects simultaneously (for
-         *  performance reasons). Furthermore, when you set this property to 'null' or
-         *  assign a different filter, the previous filter is NOT disposed automatically
-         *  (since you might want to reuse it). */
+        /** The filter that is attached to the display object. The <code>starling.filters</code>
+         *  package contains several classes that define specific filters you can use. To combine
+         *  several filters, assign an instance of the <code>FilterChain</code> class; to remove
+         *  all filters, assign <code>null</code>.
+         *
+         *  <p>Beware that a filter instance may only be used on one object at a time! Furthermore,
+         *  when you remove or replace a filter, it is NOT disposed automatically (since you might
+         *  want to reuse it on a different object).</p>
+         *
+         *  @default null
+         *  @see starling.filters.FragmentFilter
+         *  @see starling.filters.FilterChain
+         */
         public function get filter():FragmentFilter { return _filter; }
         public function set filter(value:FragmentFilter):void
         {
@@ -1074,7 +1078,6 @@ package starling.display
 
                 _mask = value;
                 setRequiresRedraw();
-                updateSupportsRenderCache();
             }
         }
 

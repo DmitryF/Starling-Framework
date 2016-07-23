@@ -14,9 +14,10 @@ package starling.display
 
     import starling.rendering.IndexData;
     import starling.rendering.MeshEffect;
-    import starling.rendering.MeshStyle;
     import starling.rendering.Painter;
     import starling.rendering.VertexData;
+    import starling.styles.MeshStyle;
+    import starling.utils.MatrixUtil;
     import starling.utils.MeshSubset;
 
     /** Combines a number of meshes to one display object and renders them efficiently.
@@ -62,8 +63,6 @@ package starling.display
             var indexData:IndexData = new IndexData();
 
             super(vertexData, indexData);
-
-            _batchable = true;
         }
 
         // display object overrides
@@ -73,12 +72,6 @@ package starling.display
         {
             if (_effect) _effect.dispose();
             super.dispose();
-        }
-
-        /** @inheritDoc */
-        override protected function get supportsRenderCache():Boolean
-        {
-            return _batchable && super.supportsRenderCache;
         }
 
         private function setVertexAndIndexDataChanged():void
@@ -101,6 +94,8 @@ package starling.display
         /** Removes all geometry. */
         public function clear():void
         {
+            if (_parent) setRequiresRedraw();
+
             _vertexData.numVertices = 0;
             _indexData.numIndices   = 0;
             _vertexSyncRequired = true;
@@ -139,7 +134,7 @@ package starling.display
                 subset.indexID, subset.numIndices);
 
             if (alpha != 1.0) _vertexData.scaleAlphas("color", alpha, targetVertexID, subset.numVertices);
-            if (_batchable) setRequiresRedraw();
+            if (_parent) setRequiresRedraw();
 
             _indexSyncRequired = _vertexSyncRequired = true;
         }
@@ -167,7 +162,7 @@ package starling.display
             meshStyle.batchIndexData(_style, indexID, vertexID, 0, numIndices);
 
             if (alpha != 1.0) _vertexData.scaleAlphas("color", alpha, vertexID, numVertices);
-            if (_batchable) setRequiresRedraw();
+            if (_parent) setRequiresRedraw();
 
             _indexSyncRequired = _vertexSyncRequired = true;
         }
@@ -207,11 +202,11 @@ package starling.display
          *  to the painter's current batch. Otherwise, this will actually do the drawing. */
         override public function render(painter:Painter):void
         {
-            if (_vertexData.numVertices == 0)
-            {
-                // nothing to do =)
-            }
-            else if (_batchable)
+            if (_vertexData.numVertices == 0) return;
+            if (_pixelSnapping) MatrixUtil.snapToPixels(
+                painter.state.modelviewMatrix, painter.pixelSize);
+
+            if (_batchable)
             {
                 painter.batchMesh(this);
             }
@@ -220,6 +215,7 @@ package starling.display
                 painter.finishMeshBatch();
                 painter.drawCount += 1;
                 painter.prepareToDraw();
+                painter.excludeFromCache(this);
 
                 if (_vertexSyncRequired) syncVertexBuffer();
                 if (_indexSyncRequired)  syncIndexBuffer();
@@ -247,8 +243,12 @@ package starling.display
          *  vertices! */
         public function set numVertices(value:int):void
         {
-            _vertexData.numVertices = value;
-            _vertexSyncRequired = true;
+            if (_vertexData.numVertices != value)
+            {
+                _vertexData.numVertices = value;
+                _vertexSyncRequired = true;
+                setRequiresRedraw();
+            }
         }
 
         /** The total number of indices in the mesh. If you change this to a smaller value,
@@ -256,27 +256,30 @@ package starling.display
          *  is a multiple of three! */
         public function set numIndices(value:int):void
         {
-            _indexData.numIndices = value;
-            _indexSyncRequired = true;
+            if (_indexData.numIndices != value)
+            {
+                _indexData.numIndices = value;
+                _indexSyncRequired = true;
+                setRequiresRedraw();
+            }
         }
 
         /** Indicates if this object will be added to the painter's batch on rendering,
          *  or if it will draw itself right away.
          *
          *  <p>Only batchable meshes can profit from the render cache; but batching large meshes
-         *  may take up a lot of CPU time. Thus, for meshes that contain a large number of vertices
-         *  or are constantly changing (i.e. can't use the render cache anyway), it makes
-         *  sense to deactivate batching.</p>
+         *  may take up a lot of CPU time. Activate this property only if the batch contains just
+         *  a handful of vertices (say, 20 quads).</p>
          *
-         *  @default true
+         *  @default false
          */
         public function get batchable():Boolean { return _batchable; }
         public function set batchable(value:Boolean):void
         {
-            if (value != _batchable) // self-rendering must disrupt the render cache
+            if (_batchable != value)
             {
                 _batchable = value;
-                updateSupportsRenderCache();
+                setRequiresRedraw();
             }
         }
     }

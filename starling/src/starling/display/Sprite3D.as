@@ -97,7 +97,7 @@ package starling.display
         }
 
         /** @inheritDoc */
-        public override function render(painter:Painter):void
+        override public function render(painter:Painter):void
         {
             if (_is2D) super.render(painter);
             else
@@ -109,12 +109,13 @@ package starling.display
                 super.render(painter);
 
                 painter.finishMeshBatch();
+                painter.excludeFromCache(this);
                 painter.popState();
             }
         }
 
         /** @inheritDoc */
-        public override function hitTest(localPoint:Point):DisplayObject
+        override public function hitTest(localPoint:Point):DisplayObject
         {
             if (_is2D) return super.hitTest(localPoint);
             else
@@ -135,22 +136,15 @@ package starling.display
             }
         }
 
-        public override function setRequiresRedraw():void
+        /** @private */
+        override public function setRequiresRedraw():void
         {
-            var was2D:Boolean = _is2D;
-
             _is2D = _z > -E && _z < E &&
                     _rotationX > -E && _rotationX < E &&
                     _rotationY > -E && _rotationY < E &&
                     _pivotZ > -E && _pivotZ < E;
 
-            if (_is2D != was2D) updateSupportsRenderCache();
             super.setRequiresRedraw();
-        }
-
-        protected override function get supportsRenderCache():Boolean
-        {
-            return _is2D && super.supportsRenderCache;
         }
 
         // helpers
@@ -195,7 +189,7 @@ package starling.display
             _transformationMatrix3D.identity();
 
             if (scaleX != 1.0 || scaleY != 1.0 || _scaleZ != 1.0)
-                _transformationMatrix3D.appendScale(scaleX || E , scaleY || E, _scaleZ || E);
+                _transformationMatrix3D.appendScale(scaleX || E , scaleY || E, _scaleZ || E);
             if (_rotationX != 0.0)
                 _transformationMatrix3D.appendRotation(rad2deg(_rotationX), Vector3D.X_AXIS);
             if (_rotationY != 0.0)
@@ -316,6 +310,12 @@ package starling.display
             _scaleZ = value;
             _transformationChanged = true;
             setRequiresRedraw();
+        }
+
+        /** @private */
+        override public function set scale(value:Number):void
+        {
+            scaleX = scaleY = scaleZ = value;
         }
 
         /** @private */
