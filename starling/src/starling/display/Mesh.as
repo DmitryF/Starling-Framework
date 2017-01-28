@@ -14,6 +14,7 @@ package starling.display
     import flash.geom.Rectangle;
 
     import starling.core.starling_internal;
+    import starling.geom.Polygon;
     import starling.rendering.IndexData;
     import starling.rendering.Painter;
     import starling.rendering.VertexData;
@@ -123,11 +124,13 @@ package starling.display
             if (_style)
             {
                 if (mergeWithPredecessor) meshStyle.copyFrom(_style);
-                _style.setTarget(null);
+                _style.setTarget();
             }
 
             _style = meshStyle;
             _style.setTarget(this, _vertexData, _indexData);
+
+            setRequiresRedraw();
         }
 
         private function createDefaultMeshStyle():MeshStyle
@@ -144,6 +147,20 @@ package starling.display
                 meshStyle = new sDefaultStyle() as MeshStyle;
 
             return meshStyle;
+        }
+
+        /** This method is called whenever the mesh's vertex data was changed.
+         *  The base implementation simply forwards to <code>setRequiresRedraw</code>. */
+        public function setVertexDataChanged():void
+        {
+            setRequiresRedraw();
+        }
+
+        /** This method is called whenever the mesh's index data was changed.
+         *  The base implementation simply forwards to <code>setRequiresRedraw</code>. */
+        public function setIndexDataChanged():void
+        {
+            setRequiresRedraw();
         }
 
         // vertex manipulation
@@ -216,10 +233,10 @@ package starling.display
         /** The style that is used to render the mesh. Styles (which are always subclasses of
          *  <code>MeshStyle</code>) provide a means to completely modify the way a mesh is rendered.
          *  For example, they may add support for color transformations or normal mapping.
-         *
-         *  <p>The setter will simply forward the assignee to <code>setStyle(value)</code>.</p>
+         *  Beware: a style instance may only be used on one mesh at a time.
          *
          *  @default MeshStyle
+         *  @see #setStyle()
          */
         public function get style():MeshStyle { return _style; }
         public function set style(value:MeshStyle):void
@@ -295,6 +312,23 @@ package starling.display
         public static function set defaultStyleFactory(value:Function):void
         {
             sDefaultStyleFactory = value;
+        }
+
+        // static methods
+
+        /** Creates a mesh from the specified polygon.
+         *  Vertex positions and indices will be set up according to the polygon;
+         *  any other vertex attributes (e.g. texture coordinates) need to be set up manually.
+         */
+        public static function fromPolygon(polygon:Polygon, style:MeshStyle=null):Mesh
+        {
+            var vertexData:VertexData = new VertexData(null, polygon.numVertices);
+            var indexData:IndexData = new IndexData(polygon.numTriangles);
+
+            polygon.copyToVertexData(vertexData);
+            polygon.triangulate(indexData);
+
+            return new Mesh(vertexData, indexData, style);
         }
     }
 }
